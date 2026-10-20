@@ -5,7 +5,8 @@
 //   ANTHROPIC_API_KEY  (secret, obligatoire)  ta clé d'API
 //   APP_CODE           (secret, conseillé)    un code que l'appli envoie à chaque demande
 //   ALLOWED_ORIGIN     (texte, facultatif)    l'adresse de ton site, ex. https://maths.exemple.com
-//   MODEL              (texte, facultatif)    modèle à utiliser, par défaut claude-sonnet-5-5
+//   MODEL              (texte, facultatif)    modèle normal, par défaut claude-sonnet-5-5
+//   MODEL_COMPLEX      (texte, facultatif)    modèle du « Mode précis », par défaut claude-opus-5-5
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
@@ -63,6 +64,11 @@ export default {
       ];
     }
 
+    // « Mode précis » de l'appli : un modèle plus puissant, plus lent et plus cher.
+    const model = body.tier === 'complex'
+      ? (env.MODEL_COMPLEX || 'claude-opus-5-5')
+      : (env.MODEL || 'claude-sonnet-5-5');
+
     let upstream;
     try {
       upstream = await fetch('https://api.anthropic.com/v1/messages', {
@@ -72,7 +78,7 @@ export default {
           'x-api-key': env.ANTHROPIC_API_KEY,
           'anthropic-version': '2023-06-01',
         },
-        body: JSON.stringify({ model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 4096, messages }),
+        body: JSON.stringify({ model, max_tokens: 4096, messages }),
       });
     } catch {
       return reply({ error: 'upstream_unreachable' }, 502, cors);
