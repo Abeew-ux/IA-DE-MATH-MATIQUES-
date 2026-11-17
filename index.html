@@ -207,13 +207,13 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
         <select id="p-classe">
           <option value="">Choisis ta classe</option>
           <option value="3e">3ème</option>
-          <option value="2A">2nde A</option>
-          <option value="2C">2nde C</option>
-          <option value="1A">1ère A</option>
-          <option value="1D">1ère D</option>
           <option value="TA">Terminale A</option>
           <option value="TD">Terminale D</option>
         </select>
+      </div>
+      <div class="fld" id="p-code-w" hidden>
+        <label for="p-code">Code d'accès</label>
+        <input id="p-code" type="text" maxlength="40" autocomplete="off" autocapitalize="off" placeholder="Donné par ton professeur">
       </div>
       <p class="hint" id="p-err" role="alert"></p>
       <div class="actions">
@@ -308,6 +308,8 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   function readCookie() { var m = /(?:^|; )cm_device=([^;]+)/.exec(document.cookie || ''); return m ? m[1] : null; }
   async function deviceId() {
     if (DEVICE) return DEVICE;
+    var nid = await nativeId();
+    if (nid) { DEVICE = nid; return nid; }
     var id = null;
     try { id = localStorage.getItem('cm_device'); } catch (e) {}
     if (!devOk(id)) { try { id = readCookie(); } catch (e) {} }
@@ -321,6 +323,18 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     try { document.cookie = 'cm_device=' + id + '; max-age=315360000; path=/; SameSite=Lax'; } catch (e) {}
     await idbSet(id);
     DEVICE = id; return id;
+  }
+  /* Dans l'application Android (Capacitor), on utilise l'identifiant Android du téléphone : il survit à l'effacement des données et à la réinstallation. */
+  async function nativeId() {
+    try {
+      var C = window.Capacitor;
+      if (C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.Device) {
+        var r = await C.Plugins.Device.getId();
+        var v = r && (r.identifier || r.uuid);
+        if (typeof v === 'string' && /^[A-Za-z0-9]{8,40}$/.test(v)) return 'and-' + v;
+      }
+    } catch (e) {}
+    return null;
   }
   var ready = Promise.resolve();
 
@@ -397,7 +411,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     try { j = await res.json(); } catch (e) {}
     if (!res.ok) {
       var er = j && j.error;
-      var known = ['quota', 'not_registered', 'name_taken', 'bad_name', 'bad_class', 'bad_device'];
+      var known = ['quota', 'not_registered', 'name_taken', 'bad_name', 'bad_class', 'bad_device', 'bad_code', 'apk_required'];
       var code = known.indexOf(er) >= 0 ? er : res.status === 429 ? 'rate_limited' : (res.status === 401 || res.status === 403) ? 'sampling_disabled' : res.status === 413 ? 'prompt_too_large' : 'upstream_error';
       throw { code: code, message: 'http ' + res.status };
     }
@@ -413,7 +427,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   if (!GEMINI_KEY && BACKEND_URL.indexOf('REMPLACE-MOI') < 0) {
     server = {
       me: function () { return call('me', {}); },
-      register: function (nom, classe) { return call('register', { nom: nom, classe: classe }); },
+      register: function (nom, classe, code) { return call('register', { nom: nom, classe: classe, code: code || '' }); },
       setClass: function (classe) { return call('classe', { classe: classe }); }
     };
     ready = deviceId().then(function () {}, function () {});
@@ -448,13 +462,9 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   var running = null, tick = null;
 
   var CLASSES = [
-    { v: '3e', label: '3ème', lvl: '3e (collège, classe de 3ème)' },
-    { v: '2A', label: '2nde A', lvl: '2nde A (lycée, série A littéraire)' },
-    { v: '2C', label: '2nde C', lvl: '2nde C (lycée, série C scientifique)' },
-    { v: '1A', label: '1ère A', lvl: '1ère A (lycée, série A littéraire)' },
-    { v: '1D', label: '1ère D', lvl: '1ère D (lycée, série D scientifique)' },
-    { v: 'TA', label: 'Terminale A', lvl: 'Terminale A (lycée, série A littéraire)' },
-    { v: 'TD', label: 'Terminale D', lvl: 'Terminale D (lycée, série D scientifique)' }
+    { v: '3e', label: '3ème', lvl: '3e (collège, classe de 3ème, candidat au BEPC)' },
+    { v: 'TA', label: 'Terminale A', lvl: 'Terminale A (lycée, série A littéraire, candidat au baccalauréat)' },
+    { v: 'TD', label: 'Terminale D', lvl: 'Terminale D (lycée, série D scientifique, candidat au baccalauréat)' }
   ];
   function classInfo(c) { for (var i = 0; i < CLASSES.length; i++) if (CLASSES[i].v === c) return CLASSES[i]; return null; }
   var EXO_LABEL = 'Je veux un exercice', EXO_TIER = 'complex', DEFAULT_PH = 'Écris un exercice ou pose une question';
@@ -468,6 +478,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   }
   var profile = loadProfile();
   var registered = false;        // mode serveur : cet appareil est inscrit côté serveur
+  var needCode = true;           // mode serveur : un code d'accès est demandé pour s'inscrire
   function firstName(n) { return String(n).trim().split(/\s+/)[0]; }
   function levelText() {
     var c = profile ? classInfo(profile.classe) : null;
@@ -480,6 +491,8 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   function loginErrorCopy(code) {
     switch (code) {
       case 'name_taken': return "Ce nom est déjà utilisé sur un autre téléphone. Écris ton nom complet (prénom et nom). Si c'est bien toi et que tu as changé de téléphone, demande à ton professeur de te débloquer.";
+      case 'bad_code': return "Code d'accès incorrect. Demande-le à ton professeur.";
+      case 'apk_required': return "Utilise l'application installée sur ton téléphone (pas le site internet).";
       case 'bad_name': return 'Écris ton prénom et ton nom, avec des lettres seulement.';
       case 'bad_class': return 'Choisis ta classe dans la liste.';
       case 'sampling_disabled': return "Accès refusé. Vérifie que tu utilises le bon lien de l'application.";
@@ -487,7 +500,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     }
   }
   function setLoginBusy(on, label) {
-    $('p-ok').disabled = on; $('p-nom').disabled = on; $('p-classe').disabled = on;
+    $('p-ok').disabled = on; $('p-nom').disabled = on; $('p-classe').disabled = on; $('p-code').disabled = on;
     if (label) $('p-ok').textContent = label;
   }
   function showLogin(edit) {
@@ -496,6 +509,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     $('p-nom').value = profile ? profile.nom : '';
     $('p-nom').readOnly = locked;
     $('p-classe').value = hasClass() ? profile.classe : '';
+    $('p-code').value = ''; $('p-code-w').hidden = !(server && needCode && !locked);
     $('p-note').textContent = locked
       ? 'Ton nom est enregistré : il ne peut plus être changé. Tu peux seulement changer ta classe.'
       : 'Attention : une fois enregistré, ton nom ne pourra plus être changé. Écris ton prénom et ton nom correctement.';
@@ -510,12 +524,13 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   $('profile').addEventListener('click', function () { showLogin(true); });
 
   function applyMe(r) {
-    if (!r || !r.registered || !classInfo(r.classe)) return false;
+    if (r && typeof r.code === 'boolean') needCode = r.code;
+    if (!r || !r.registered) { registered = false; return false; }
     profile = { nom: String(r.nom).slice(0, 40), classe: r.classe }; store.set(PRKEY, profile);
     registered = true;
     if (typeof r.limit === 'number' && r.limit > 0) LIM.daily = r.limit;
     if (typeof r.left === 'number') serverLeft = r.left;
-    return true;
+    return !!classInfo(r.classe);   // une ancienne classe (hors liste) oblige à re-choisir sa classe
   }
   var loginBusy = false;
   $('login-form').addEventListener('submit', async function (e) {
@@ -528,9 +543,11 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
       if (!/^[\p{L}][\p{L} '’.-]*$/u.test(nom)) { loginError(loginErrorCopy('bad_name')); $('p-nom').focus(); return; }
     }
     if (!classInfo(sel)) { loginError('Choisis ta classe.'); $('p-classe').focus(); return; }
+    var code = $('p-code').value.trim();
+    if (!locked && server && needCode && !code) { loginError("Écris le code d'accès donné par ton professeur."); $('p-code').focus(); return; }
     loginBusy = true; loginError(''); setLoginBusy(true, 'Un instant…');
     try {
-      if (server) applyMe(locked ? await server.setClass(sel) : await server.register(nom, sel));
+      if (server) applyMe(locked ? await server.setClass(sel) : await server.register(nom, sel, code));
       else { profile = { nom: nom.slice(0, 40), classe: sel }; store.set(PRKEY, profile); registered = true; }
       updateProfileBtn(); hideLogin();
       if (!conv.length) { thread.replaceChildren(); addWelcome(); }
@@ -546,9 +563,9 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     try {
       var r = await server.me();
       if (applyMe(r)) { updateProfileBtn(); hideLogin(); return; }
-      registered = false; showLogin(false);
+      showLogin(false);
     } catch (err) {
-      if (hasClass() && err && err.code !== 'sampling_disabled') { registered = true; updateProfileBtn(); hideLogin(); return; }   // pas de réseau : on garde le profil connu
+      if (hasClass() && err && err.code !== 'sampling_disabled' && err.code !== 'apk_required') { registered = true; updateProfileBtn(); hideLogin(); return; }   // pas de réseau : on garde le profil connu
       registered = false; showLogin(false); loginError(loginErrorCopy(err && err.code));
     }
   }
@@ -598,6 +615,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
       case 'refused': return "Claude n'a pas pu traiter ce message. Reformule-le.";
       case 'invalid_json': case 'empty_completion': return "La réponse n'a pas pu être mise en forme.";
       case 'cancelled': return 'Réponse arrêtée.';
+      case 'apk_required': return "Utilise l'application installée sur ton téléphone (pas le site internet).";
       case 'not_registered': return 'Ton inscription est introuvable. Écris ton nom et ta classe pour te reconnecter.';
       case 'bad_device': return "Ton téléphone n'a pas pu être reconnu. Recharge la page.";
       default: return 'La connexion a été interrompue.';
