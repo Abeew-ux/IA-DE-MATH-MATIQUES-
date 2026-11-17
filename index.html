@@ -67,6 +67,8 @@ button,input,textarea,select{font:inherit;color:inherit}
 .login-card{width:100%;max-width:420px;margin:auto;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:16px}
 .lt{font:700 26px/1.2 var(--hand);margin:0}
 .lead{margin:0;color:var(--ink-soft)}
+.note{margin:-6px 0 0;color:var(--ink-soft);font-size:14px}
+.fld input[readonly]{background:var(--line);color:var(--ink-soft)}
 .fld{display:flex;flex-direction:column;gap:6px}
 .fld label{font-weight:700}
 .fld input,.fld select{width:100%;min-height:48px;border:1px solid var(--line);border-radius:10px;background:var(--paper);padding:0 12px;font-size:17px;color:var(--ink)}
@@ -185,7 +187,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
       <button type="button" class="btn" id="fresh">Nouveau</button>
     </div>
     <div class="sub">
-      <button type="button" class="tg" id="profile" aria-label="Changer de nom ou de classe" title="Changer de nom ou de classe"></button>
+      <button type="button" class="tg" id="profile" aria-label="Mon profil : changer de classe" title="Mon profil : changer de classe"></button>
       <button type="button" class="tg" id="precise" aria-pressed="false" title="Réflexion plus longue, réponses plus fiables">Mode précis</button>
       <span class="avg" id="avg" hidden></span>
     </div>
@@ -194,29 +196,24 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   <section class="login" id="login" hidden aria-labelledby="login-t">
     <form class="login-card" id="login-form" autocomplete="off" novalidate>
       <h2 class="lt" id="login-t" style="text-transform:none;letter-spacing:0;color:var(--ink)">Bienvenue !</h2>
-      <p class="lead">Dis-moi qui tu es pour que je m'adapte à ta classe. Ces informations restent sur ton téléphone.</p>
+      <p class="lead" id="p-lead">Écris ton nom et choisis ta classe pour que je m'adapte à ton programme.</p>
       <div class="fld">
         <label for="p-nom">Ton nom</label>
         <input id="p-nom" type="text" maxlength="40" autocomplete="name" placeholder="Prénom et nom">
       </div>
+      <p class="note" id="p-note"></p>
       <div class="fld">
         <label for="p-classe">Ta classe</label>
         <select id="p-classe">
           <option value="">Choisis ta classe</option>
-          <option value="6e">6e</option>
-          <option value="5e">5e</option>
-          <option value="4e">4e</option>
-          <option value="3e">3e</option>
-          <option value="2nde">2nde</option>
-          <option value="1ère">1ère</option>
-          <option value="Terminale">Terminale</option>
-          <option value="Supérieur">Supérieur</option>
-          <option value="Autre">Autre</option>
+          <option value="3e">3ème</option>
+          <option value="2A">2nde A</option>
+          <option value="2C">2nde C</option>
+          <option value="1A">1ère A</option>
+          <option value="1D">1ère D</option>
+          <option value="TA">Terminale A</option>
+          <option value="TD">Terminale D</option>
         </select>
-      </div>
-      <div class="fld" id="p-autre-w" hidden>
-        <label for="p-autre">Précise ta classe</label>
-        <input id="p-autre" type="text" maxlength="30" placeholder="Ex. Terminale D">
       </div>
       <p class="hint" id="p-err" role="alert"></p>
       <div class="actions">
@@ -283,6 +280,48 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   var BACKEND_URL = 'https://cetbspgxsqbaousqrara.supabase.co/functions/v1/correcteur-maths';
   var APP_CODE = '0z8oo1q3he111t';
   var imgLimits = { maxCount: 4, maxInputBytes: 20000000, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] };
+  var server = null;
+
+  /* Identifiant du téléphone : gardé à trois endroits (stockage, cookie, base du navigateur) pour résister à un effacement partiel. */
+  var DEVICE = null;
+  function devOk(v) { return typeof v === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(v); }
+  function idbOpen() {
+    return new Promise(function (res, rej) {
+      var r = indexedDB.open('cm_device', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  async function idbGet() {
+    try {
+      var db = await idbOpen();
+      return await new Promise(function (res) { var q = db.transaction('kv').objectStore('kv').get('id'); q.onsuccess = function () { res(q.result); }; q.onerror = function () { res(null); }; });
+    } catch (e) { return null; }
+  }
+  async function idbSet(v) {
+    try {
+      var db = await idbOpen();
+      await new Promise(function (res) { var t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, 'id'); t.oncomplete = res; t.onerror = res; t.onabort = res; });
+    } catch (e) {}
+  }
+  function readCookie() { var m = /(?:^|; )cm_device=([^;]+)/.exec(document.cookie || ''); return m ? m[1] : null; }
+  async function deviceId() {
+    if (DEVICE) return DEVICE;
+    var id = null;
+    try { id = localStorage.getItem('cm_device'); } catch (e) {}
+    if (!devOk(id)) { try { id = readCookie(); } catch (e) {} }
+    if (!devOk(id)) id = await idbGet();
+    if (!devOk(id)) {
+      var a = new Uint8Array(24);
+      if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(a); else for (var i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256);
+      id = Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    }
+    try { localStorage.setItem('cm_device', id); } catch (e) {}
+    try { document.cookie = 'cm_device=' + id + '; max-age=315360000; path=/; SameSite=Lax'; } catch (e) {}
+    await idbSet(id);
+    DEVICE = id; return id;
+  }
   var ready = Promise.resolve();
 
   async function prep(blob) {
@@ -343,25 +382,42 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     if (!text) throw { code: 'upstream_error', message: 'empty' };
     return parseJson(text);
   }
-  var llm = async function (turns, o) {
-    var images = (o.images && o.images.length) ? await Promise.all(o.images.map(prep)) : [];
-    if (GEMINI_KEY) return direct(turns, images, o.signal);
+  async function call(route, body, signal) {
+    var dev = await deviceId();
+    var headers = { 'content-type': 'application/json', 'x-device-id': dev };
+    if (APP_CODE) headers['x-app-code'] = APP_CODE;
     var res;
     try {
-      var headers = { 'content-type': 'application/json' };
-      if (APP_CODE) headers['x-app-code'] = APP_CODE;
-      res = await fetch(BACKEND_URL.replace(/\/$/, '') + '/chat', { method: 'POST', headers: headers, body: JSON.stringify({ turns: turns, images: images, tier: o.tier || 'default' }), signal: o.signal });
+      res = await fetch(BACKEND_URL.replace(/\/$/, '') + '/' + route, { method: 'POST', headers: headers, body: JSON.stringify(body || {}), signal: signal });
     } catch (e) {
       if (e && e.name === 'AbortError') throw { code: 'cancelled', message: 'abort' };
       throw { code: 'upstream_error', message: String(e) };
     }
+    var j = null;
+    try { j = await res.json(); } catch (e) {}
     if (!res.ok) {
-      var code = res.status === 429 ? 'rate_limited' : (res.status === 401 || res.status === 403) ? 'sampling_disabled' : res.status === 413 ? 'prompt_too_large' : 'upstream_error';
+      var er = j && j.error;
+      var known = ['quota', 'not_registered', 'name_taken', 'bad_name', 'bad_class', 'bad_device'];
+      var code = known.indexOf(er) >= 0 ? er : res.status === 429 ? 'rate_limited' : (res.status === 401 || res.status === 403) ? 'sampling_disabled' : res.status === 413 ? 'prompt_too_large' : 'upstream_error';
       throw { code: code, message: 'http ' + res.status };
     }
-    var j = await res.json();
+    return j;
+  }
+  var llm = async function (turns, o) {
+    var images = (o.images && o.images.length) ? await Promise.all(o.images.map(prep)) : [];
+    if (GEMINI_KEY) return direct(turns, images, o.signal);
+    var j = await call('chat', { turns: turns, images: images, tier: o.tier || 'default' }, o.signal);
+    if (o.onLeft) o.onLeft(j && j.left);
     return parseJson(j && j.text);
   };
+  if (!GEMINI_KEY && BACKEND_URL.indexOf('REMPLACE-MOI') < 0) {
+    server = {
+      me: function () { return call('me', {}); },
+      register: function (nom, classe) { return call('register', { nom: nom, classe: classe }); },
+      setClass: function (classe) { return call('classe', { classe: classe }); }
+    };
+    ready = deviceId().then(function () {}, function () {});
+  }
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
   }
@@ -376,8 +432,12 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   var lastSend = 0;
   function today() { var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
   function quotaUsed() { var q = store.get(QKEY); return (q && q.d === today() && q.n > 0) ? q.n : 0; }
-  function quotaAdd(k) { store.set(QKEY, { d: today(), n: Math.max(0, quotaUsed() + k) }); }
-  function quotaLeft() { return Math.max(0, LIM.daily - quotaUsed()); }
+  var serverLeft = null;       // quota restant d'après le serveur (mode serveur) ; null = pas encore connu
+  function quotaAdd(k) {
+    store.set(QKEY, { d: today(), n: Math.max(0, quotaUsed() + k) });
+    if (serverLeft !== null) serverLeft = Math.max(0, serverLeft - k);
+  }
+  function quotaLeft() { return serverLeft !== null ? serverLeft : Math.max(0, LIM.daily - quotaUsed()); }
   function limitMsg() {
     thread.append(h('div', { class: 'msg sys' }, 'Tu as atteint la limite de ' + LIM.daily + ' demandes pour aujourd\'hui. Cette limite permet à tous les élèves de profiter de l\'appli gratuitement. Reviens demain !'));
     toBottom();
@@ -387,7 +447,16 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
   var pending = [];              // {blob,url}
   var running = null, tick = null;
 
-  var PCLASSES = ['6e', '5e', '4e', '3e', '2nde', '1ère', 'Terminale', 'Supérieur'];
+  var CLASSES = [
+    { v: '3e', label: '3ème', lvl: '3e (collège, classe de 3ème)' },
+    { v: '2A', label: '2nde A', lvl: '2nde A (lycée, série A littéraire)' },
+    { v: '2C', label: '2nde C', lvl: '2nde C (lycée, série C scientifique)' },
+    { v: '1A', label: '1ère A', lvl: '1ère A (lycée, série A littéraire)' },
+    { v: '1D', label: '1ère D', lvl: '1ère D (lycée, série D scientifique)' },
+    { v: 'TA', label: 'Terminale A', lvl: 'Terminale A (lycée, série A littéraire)' },
+    { v: 'TD', label: 'Terminale D', lvl: 'Terminale D (lycée, série D scientifique)' }
+  ];
+  function classInfo(c) { for (var i = 0; i < CLASSES.length; i++) if (CLASSES[i].v === c) return CLASSES[i]; return null; }
   var EXO_LABEL = 'Je veux un exercice', EXO_TIER = 'complex', DEFAULT_PH = 'Écris un exercice ou pose une question';
   var appEl = document.querySelector('.app');
   var awaitingTopic = false, discardNext = false;
@@ -398,45 +467,91 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     return { nom: p.nom.trim().slice(0, 40), classe: p.classe.trim().slice(0, 30) };
   }
   var profile = loadProfile();
+  var registered = false;        // mode serveur : cet appareil est inscrit côté serveur
   function firstName(n) { return String(n).trim().split(/\s+/)[0]; }
   function levelText() {
-    var c = profile ? profile.classe : '';
-    if (!c) return 'non précisé';
-    if (c === 'Supérieur') return 'enseignement supérieur (licence, classes préparatoires)';
-    if (/^(6e|5e|4e|3e)$/.test(c)) return c + ' (collège)';
-    if (/^(2nde|1ère|Terminale)$/.test(c)) return c + ' (lycée)';
-    return c;
+    var c = profile ? classInfo(profile.classe) : null;
+    return c ? c.lvl : 'non précisé';
   }
-  function updateProfileBtn() { $('profile').textContent = firstName(profile.nom) + ' · ' + profile.classe; }
+  function hasClass() { return !!profile && !!classInfo(profile.classe); }
+  function nameLocked() { return server ? registered : !!profile; }   // le nom ne change plus une fois enregistré
+  function updateProfileBtn() { var c = classInfo(profile.classe); $('profile').textContent = firstName(profile.nom) + ' · ' + (c ? c.label : '?'); }
   function loginError(m) { $('p-err').textContent = m; }
+  function loginErrorCopy(code) {
+    switch (code) {
+      case 'name_taken': return "Ce nom est déjà utilisé sur un autre téléphone. Écris ton nom complet (prénom et nom). Si c'est bien toi et que tu as changé de téléphone, demande à ton professeur de te débloquer.";
+      case 'bad_name': return 'Écris ton prénom et ton nom, avec des lettres seulement.';
+      case 'bad_class': return 'Choisis ta classe dans la liste.';
+      case 'sampling_disabled': return "Accès refusé. Vérifie que tu utilises le bon lien de l'application.";
+      default: return 'Connexion impossible. Vérifie ton internet et réessaie.';
+    }
+  }
+  function setLoginBusy(on, label) {
+    $('p-ok').disabled = on; $('p-nom').disabled = on; $('p-classe').disabled = on;
+    if (label) $('p-ok').textContent = label;
+  }
   function showLogin(edit) {
-    appEl.classList.add('locked'); $('login').hidden = false; loginError('');
-    var known = !!profile && PCLASSES.indexOf(profile.classe) >= 0;
+    appEl.classList.add('locked'); $('login').hidden = false; loginError(''); setLoginBusy(false);
+    var locked = nameLocked();
     $('p-nom').value = profile ? profile.nom : '';
-    $('p-classe').value = profile ? (known ? profile.classe : 'Autre') : '';
-    $('p-autre').value = profile && !known ? profile.classe : '';
-    $('p-autre-w').hidden = $('p-classe').value !== 'Autre';
-    $('p-cancel').hidden = !(edit && profile);
-    $('p-ok').textContent = edit ? 'Enregistrer' : 'Commencer';
-    $('p-nom').focus();
+    $('p-nom').readOnly = locked;
+    $('p-classe').value = hasClass() ? profile.classe : '';
+    $('p-note').textContent = locked
+      ? 'Ton nom est enregistré : il ne peut plus être changé. Tu peux seulement changer ta classe.'
+      : 'Attention : une fois enregistré, ton nom ne pourra plus être changé. Écris ton prénom et ton nom correctement.';
+    $('login-t').textContent = locked ? 'Mon profil' : 'Bienvenue !';
+    $('p-lead').textContent = locked ? 'Tu peux changer de classe si tu as changé de niveau.' : 'Écris ton nom et choisis ta classe pour que je m\'adapte à ton programme.';
+    $('p-cancel').hidden = !(edit && hasClass());
+    $('p-ok').textContent = locked ? 'Enregistrer' : 'Commencer';
+    (locked ? $('p-classe') : $('p-nom')).focus();
   }
   function hideLogin() { $('login').hidden = true; appEl.classList.remove('locked'); }
-  $('p-classe').addEventListener('change', function () { $('p-autre-w').hidden = $('p-classe').value !== 'Autre'; });
   $('p-cancel').addEventListener('click', hideLogin);
   $('profile').addEventListener('click', function () { showLogin(true); });
-  $('login-form').addEventListener('submit', function (e) {
+
+  function applyMe(r) {
+    if (!r || !r.registered || !classInfo(r.classe)) return false;
+    profile = { nom: String(r.nom).slice(0, 40), classe: r.classe }; store.set(PRKEY, profile);
+    registered = true;
+    if (typeof r.limit === 'number' && r.limit > 0) LIM.daily = r.limit;
+    if (typeof r.left === 'number') serverLeft = r.left;
+    return true;
+  }
+  var loginBusy = false;
+  $('login-form').addEventListener('submit', async function (e) {
     e.preventDefault();
-    var nom = $('p-nom').value.trim().replace(/\s+/g, ' '), sel = $('p-classe').value, autre = $('p-autre').value.trim().replace(/\s+/g, ' ');
-    if (!nom) { loginError('Écris ton nom.'); $('p-nom').focus(); return; }
-    if (!sel) { loginError('Choisis ta classe.'); $('p-classe').focus(); return; }
-    if (sel === 'Autre' && !autre) { loginError('Précise ta classe.'); $('p-autre').focus(); return; }
-    var other = !!profile && profile.nom.toLowerCase() !== nom.toLowerCase();
-    profile = { nom: nom.slice(0, 40), classe: (sel === 'Autre' ? autre : sel).slice(0, 30) };
-    store.set(PRKEY, profile);
-    updateProfileBtn(); hideLogin();
-    if (other) resetConversation();
-    else if (!conv.length) { thread.replaceChildren(); addWelcome(); }
+    if (loginBusy) return;
+    var locked = nameLocked();
+    var nom = locked ? profile.nom : $('p-nom').value.trim().replace(/\s+/g, ' '), sel = $('p-classe').value;
+    if (!locked) {
+      if (nom.length < 3) { loginError('Écris ton prénom et ton nom.'); $('p-nom').focus(); return; }
+      if (!/^[\p{L}][\p{L} '’.-]*$/u.test(nom)) { loginError(loginErrorCopy('bad_name')); $('p-nom').focus(); return; }
+    }
+    if (!classInfo(sel)) { loginError('Choisis ta classe.'); $('p-classe').focus(); return; }
+    loginBusy = true; loginError(''); setLoginBusy(true, 'Un instant…');
+    try {
+      if (server) applyMe(locked ? await server.setClass(sel) : await server.register(nom, sel));
+      else { profile = { nom: nom.slice(0, 40), classe: sel }; store.set(PRKEY, profile); registered = true; }
+      updateProfileBtn(); hideLogin();
+      if (!conv.length) { thread.replaceChildren(); addWelcome(); }
+    } catch (err) {
+      showLoginAgain(locked, loginErrorCopy(err && err.code));
+    } finally { loginBusy = false; }
   });
+  function showLoginAgain(locked, msg) { setLoginBusy(false); $('p-ok').textContent = locked ? 'Enregistrer' : 'Commencer'; loginError(msg); }
+
+  /* Mode serveur : on demande au serveur qui est ce téléphone. */
+  async function bootServer() {
+    appEl.classList.add('locked'); $('login').hidden = false; setLoginBusy(true, 'Connexion…'); loginError('');
+    try {
+      var r = await server.me();
+      if (applyMe(r)) { updateProfileBtn(); hideLogin(); return; }
+      registered = false; showLogin(false);
+    } catch (err) {
+      if (hasClass() && err && err.code !== 'sampling_disabled') { registered = true; updateProfileBtn(); hideLogin(); return; }   // pas de réseau : on garde le profil connu
+      registered = false; showLogin(false); loginError(loginErrorCopy(err && err.code));
+    }
+  }
 
   function setAwaiting(on) { awaitingTopic = on; $('msg').placeholder = on ? "Le sujet de l'exercice…" : DEFAULT_PH; }
   function askTopic() {
@@ -483,6 +598,8 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
       case 'refused': return "Claude n'a pas pu traiter ce message. Reformule-le.";
       case 'invalid_json': case 'empty_completion': return "La réponse n'a pas pu être mise en forme.";
       case 'cancelled': return 'Réponse arrêtée.';
+      case 'not_registered': return 'Ton inscription est introuvable. Écris ton nom et ta classe pour te reconnecter.';
+      case 'bad_device': return "Ton téléphone n'a pas pu être reconnu. Recharge la page.";
       default: return 'La connexion a été interrompue.';
     }
   }
@@ -663,7 +780,7 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     running = new AbortController(); setRunning(true);
     var wait = addWait();
     try {
-      var raw = await llm(buildTurns(), { images: blobs, signal: running.signal, tier: tierOverride || (precise ? 'complex' : 'default') });
+      var raw = await llm(buildTurns(), { images: blobs, signal: running.signal, tier: tierOverride || (precise ? 'complex' : 'default'), onLeft: function (n) { if (typeof n === 'number') serverLeft = Math.max(0, n); } });
       stopTick(); wait.remove();
       if (discardNext) { discardNext = false; return; }
       var data = norm(raw);
@@ -672,8 +789,11 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
       if (quotaLeft() <= 5) hint(quotaLeft() ? 'Il te reste ' + quotaLeft() + ' demande' + (quotaLeft() > 1 ? 's' : '') + ' aujourd\'hui.' : 'C\'était ta dernière demande du jour.');
     } catch (err) {
       stopTick(); wait.remove();
-      if (!(err && err.code === 'cancelled')) quotaAdd(-1);
+      var ecode = err && err.code;
+      if (ecode === 'quota') { serverLeft = 0; limitMsg(); return; }
+      if (ecode !== 'cancelled') quotaAdd(-1);
       if (discardNext) { discardNext = false; return; }
+      if (ecode === 'not_registered') { registered = false; showLogin(false); return; }
       var el = h('div', { class: 'msg sys err' }, h('span', null, errorCopy(err && err.code)),
         h('button', { type: 'button', class: 'btn', onclick: function () { el.remove(); respond(blobs, tierOverride); } }, 'Réessayer'));
       thread.append(el); toBottom();
@@ -778,7 +898,9 @@ details.sol li{padding-left:4px;margin-bottom:6px;overflow-wrap:anywhere}
     });
     toBottom(); updateAvg();
   } else { addWelcome(); }
-  if (profile) updateProfileBtn(); else showLogin(false);
+  if (server) bootServer();
+  else if (hasClass()) updateProfileBtn();
+  else showLogin(false);
 })();
 </script>
 </body>
