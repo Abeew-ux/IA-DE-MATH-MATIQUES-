@@ -1,1 +1,110 @@
+# Construit l'application Android (APK) de Correcteur de Maths CSP/ASSO.
+# Lance-le : onglet Actions > "Construire l'APK" > Run workflow (il se lance aussi quand index.html change).
+# Résultat : onglet Releases > "Application Android" > correcteur-maths.apk
+name: Construire l'APK
 
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'index.html'
+      - '.github/workflows/apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Projet Capacitor
+        run: |
+          mkdir -p apk/www
+          cd apk
+          cp ../index.html www/index.html
+          for f in manifest.json icon-192.png icon-512.png; do [ -f "../$f" ] && cp "../$f" www/ || true; done
+          cat > package.json <<'JSON'
+          {
+            "name": "correcteur-maths-apk",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/core": "^6.0.0",
+              "@capacitor/device": "^6.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.0.0"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "org.cspasso.correcteurmaths",
+            "appName": "Correcteur de Maths CSP/ASSO",
+            "webDir": "www",
+            "server": { "androidScheme": "https" }
+          }
+          JSON
+          npm install --no-audit --no-fund
+          npx cap add android
+
+      - name: Icône et caméra
+        run: |
+          cd apk
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          import os, shutil
+          from PIL import Image
+          res = 'android/app/src/main/res'
+          src = '../icon-512.png'
+          if os.path.exists(src):
+              im = Image.open(src).convert('RGBA')
+              for d, n in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
+                  for name in ('ic_launcher.png', 'ic_launcher_round.png'):
+                      im.resize((n, n), Image.LANCZOS).save(os.path.join(res, 'mipmap-' + d, name))
+              shutil.rmtree(os.path.join(res, 'mipmap-anydpi-v26'), ignore_errors=True)
+          m = 'android/app/src/main/AndroidManifest.xml'
+          s = open(m, encoding='utf-8').read()
+          if 'android.permission.CAMERA' not in s:
+              s = s.replace('</manifest>', '    <uses-permission android:name="android.permission.CAMERA" />\n</manifest>')
+              open(m, 'w', encoding='utf-8').write(s)
+          PY
+
+      - name: Synchroniser
+        run: cd apk && npx cap sync android
+
+      - name: Clé de signature fixe (garde le même identifiant Android d'une version à l'autre)
+        run: |
+          mkdir -p ~/.android
+          echo '/u3+7QAAAAIAAAABAAAAAQAPYW5kcm9pZGRlYnVna2V5AAABoekg1bQAAAUAMIIE/DAMBgorBgEEASoCEQEBBIIE6qBA7gTAe1Ut+vXzhcUkNqv9plllYhbVOjWdgV48AoyyvWQFeqPOcUO0Ih/Bxk0YIIcQ96l22vRk+e6mtpxo/yxnJ2cm/IhkTxefuLaTrYIgdTb7gZKITtP5M71jXSqgQ1BgiPj+Tenr5K4SZSoCKtUPUKKbj1BctVbWGx9GHjiMvaAfIkoc5AUSx/dbIy6MtZMvlO1Yk8eKiCwIdAJ16Y3+IiaHJoRpv1IrmXnL1maO+9OcWwZWn1figlxERgUm4C+qnYZTRsZztFYHlCmKzaQtKcRtaNZ+Is9tiNj35tY0RukP8oey+oDYXr8IkXDi1FwTVVbOqcMp5CvgxxN8iFjN0plGqmNPMxYo0f7C5WcVZH+aKGcFPXJYOYS0lgeSPfhy9osDSQvFGNvAojsUcIYCZnIMxc9OuV7O1X/cvoBM5RxM9c9bvCnWYlQK5ub5M27T/IHpHqLW+iPTXw/CK6fQFRpqpOKw5S4k1CVzhrEp9VGIezYlLc+yYuqqCkNgCEuDkv3MH7+8KIa1R6+yzWjTwrqh6xOAlEBsZBZ3lbIuJ/2ljMPmKWjm9+9g5k2RpMRETv5ipQNyyLHm+iwfXtEA/1agzurEWQjpSABKeyK6Sb+cJVhGh7speEUgD6QK3ru/8wm+0NWP+lpA8fqUNYO0g1rZ4ugvU3n2sgEzDRoQpujtV0wxEgFkyfCYfnwEGtcVRj9H43oiFO2fVbOl0wFiW3i9YC/Quy2XAi6DjJYGoPEFvI7dG8x4zHREKYGB/7YNb1sGiC0ZFa4+mOXAIpmqS2yuN/RzRclzr2LcAm2KSUiToSruRcbwepqpy5uMoTG8xVMGsg/r4dkHJ9pEVBKLblYOv6xRKSgwi6dEnVmAnqAtLTPfB3okGikcZrvpzFcQX1lPWxvNusGei/TH6YbMIw+Via82J2vUSUajMHH/oHw4iH9/eqVvci9aOY/exX4PMwputVnL2rd6HRk8UJFQZ7QYkac+wIrcGGcu84+oMVpRPkW1B15LJYhxmNyDqKYBe5xVUU6zcvvZfQMDqsHAwtxsbIPG9EN+ANgVPHVkhPgH3cD8wh7L1ZnguJnXgfRT/DowSY2VvQ4VboUd5nhrj1lfoPltgPUIc8vqS9K5lkOttxNVC8HpvaxsG327U28feViZXS5iRWnZEuuLwqUBH4MLkwEdpA3+c/fed0GZxZzY8Sqgu48Pm0lKlG9ZzHQEmdz3kYE6zy39o4ctVDZkIObviB5Z4QXWApf8V2p1SfFe8jjTngKhYFjrOLsxLEUlcmqBU8Vo9MOclOhYcWDGWbwQi0ah4QArH5TGSM66RbuCmcX/6vtq/bT1qn4XIAnzQLqiLRosmw24knWOjJljPlGdRDtzEnnNKTBj6W5BEDrktMJFlp931LsYAUUBnnxDWc/yvDKxk7wz9oRq/p6K37bxz1+d93OqoyGPYirKxz0UxtD+mpCPzYFlIlPGf+xeSA8ByvjsU7Awzt4craLpKRgRBz/vRgf3STcv5NfbPhPrVQyXCgEIrH6U44DIpETLGX69pYyhfS71WtslqGcghQ7MTsx2sSsUlYfTdvqSXUlWXV5miiXdBPRVpwU+MR5SUjZAKjX5JUGg83vi1LTcJWKk1S+DupVfO8X56/rABx9eh5Fl36eLPelk395996ihSoY9UyVeXiMAAAABAAVYLjUwOQAAAzIwggMuMIICFqADAgECAgkAoOpDQblZfeQwDQYJKoZIhvcNAQEMBQAwRDELMAkGA1UEBhMCTkUxETAPBgNVBAoTCENTUCBBU1NPMSIwIAYDVQQDExlDb3JyZWN0ZXVyIE1hdGhzIENTUCBBU1NPMCAXDTI2MTExNzEwNTAwNVoYDzIxMjYxMDI0MTA1MDA1WjBEMQswCQYDVQQGEwJORTERMA8GA1UEChMIQ1NQIEFTU08xIjAgBgNVBAMTGUNvcnJlY3RldXIgTWF0aHMgQ1NQIEFTU08wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7fhUy6apukgs06iZKZw00JkLOFNPSxx4YjfN7U0DH5Xe0tovVMQHu3rCCYJCbUR0eS0YJOeTMyaTBE3gkayUAjhT9Aq0fsNzrpuDf5zn5PbDVB5EDS0qVC8kvqc8hBecwBdCGNUYpmMS1iHjCqUCvfD5yE6EPSnL1jZnwcSgpZKJ7hKs65fCL0USaVDwicunhs4O0pctQLVtG0myi0PAAn9auStahTgBPVrmqprDR4h/PCThNEOYPs4wFQnnL6T77t4UBIyakvt7DIIgl86JsI08nl9UVd+x/HCtm5vFJ3FWgK6O9CL6eGAJKJ+e2xOMnIpClovHrpp5t/kav00ORAgMBAAGjITAfMB0GA1UdDgQWBBR3mI0M/Uj0rXOvyZRAzSIGhFamSDANBgkqhkiG9w0BAQwFAAOCAQEAgGbvkI1ZtmBau2mghaYwrGpyvXa+qPB2QPaT26L5/e7Gy4K/TiHywUt1DIH3hFxm1weiQ/7++w/W/3Xl9/nuycg6YHSeWw7KxMNRTSan7bA8v8NLPNn882Eh4Y2NpLEkPcWEIvOaOFCb9pNAU2tpkVWOEhRx3DrgUhgMWvdDFs7FGwRUwdJJGHiHIlwIE9UxriBvTYxUpNgKVZwarMHW/sD9QIZGi9MTEuZrCgF7jRWuxdtGc0XgIozhuURxjmXQmUmTu56DOWyNL3P6oFBRmbqj87pO962d6yDE3q5zHPlydCNbLYKPOa+WZa0H0uVt2fYTEyE30hB4dv+nzPRmaGwL9g6NbktgNVOJRdCQ+A3DyfVh' | base64 -d > ~/.android/debug.keystore
+
+      - name: Compiler
+        run: cd apk/android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+
+      - name: Nommer le fichier
+        run: cp apk/android/app/build/outputs/apk/debug/app-debug.apk correcteur-maths.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: correcteur-maths-apk
+          path: correcteur-maths.apk
+
+      - name: Publier dans Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk
+          name: Application Android
+          body: Télécharge correcteur-maths.apk sur le téléphone de l'élève, puis ouvre-le pour l'installer.
+          files: correcteur-maths.apk
